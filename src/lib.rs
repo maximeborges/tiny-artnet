@@ -1,12 +1,14 @@
 #![no_std]
 extern crate tiny_artnet_bytes_no_atomic as bytes;
 
+pub mod codes;
+
 mod poll_reply;
 pub use poll_reply::PollReply;
 
 use core::ops::RangeInclusive;
 
-use bytes::BufMut;
+use bytes::{BufMut, BytesMut};
 use nom::{
     bytes::complete::tag,
     number::complete as number,
@@ -21,10 +23,12 @@ pub const PORT: u16 = 0x1936;
 const DEFAULT_4_BYTES: &'static [u8; 4] = &[0; 4];
 const DEFAULT_6_BYTES: &'static [u8; 6] = &[0; 6];
 
+const PROTOCOL_VERSION: u16 = 14;
+
 #[derive(Debug)]
 pub enum Art<'a> {
     Poll(Poll),
-    // PollReply(PollReply),
+    PollReply(PollReply<'a>),
     Command(Command<'a>),
     Dmx(Dmx<'a>),
     Sync,
@@ -32,6 +36,9 @@ pub enum Art<'a> {
 
 #[derive(Debug)]
 pub enum Error<'a> {
+    InvalidNet,
+    InvalidSubnet,
+    InvalidUniverse,
     UnsupportedProtocolVersion(u16),
     UnsupportedOpCode(u16),
     ParserError(nom::Err<nom::error::Error<&'a [u8]>>),
@@ -48,22 +55,61 @@ pub fn from_slice<'a>(s: &'a [u8]) -> Result<Art<'a>, Error<'a>> {
     let (s, _) = tag(ID)(s)?;
 
     let (s, op_code) = le_u16(s)?;
-    let (s, protocol_version): (&'a [u8], u16) = be_u16(s)?;
 
-    if protocol_version > 14 {
-        return Err(Error::UnsupportedProtocolVersion(protocol_version));
+    // not all packets have a protocol number
+
+    if [
+        codes::OP_POLL,
+        codes::OP_COMMAND,
+        codes::OP_DMX,
+        codes::OP_SYNC,
+    ]
+    .contains(&op_code)
+    {
+        let (s, protocol_version): (&'a [u8], u16) = be_u16(s)?;
+
+        if protocol_version > PROTOCOL_VERSION {
+            return Err(Error::UnsupportedProtocolVersion(protocol_version));
+        }
+
+        let message = match op_code {
+            codes::OP_POLL => Art::Poll(parse_poll(s)?),
+            codes::OP_COMMAND => Art::Command(parse_command(s)?),
+            codes::OP_DMX => Art::Dmx(parse_dmx(s)?),
+            codes::OP_SYNC => parse_sync(s).map(|_| Art::Sync)?,
+            _ => unreachable!(),
+        };
+
+        Ok(message)
+    } else {
+        Err(Error::UnsupportedOpCode(op_code))
     }
+}
 
-    let message = match op_code {
-        0x2000 => Art::Poll(parse_poll(s)?),
-        // poll_reply::OP_POLL_REPLY => Art::PollReply(poll_reply::from_str(s)?),
-        0x2400 => Art::Command(parse_command(s)?),
-        0x5000 => Art::Dmx(parse_dmx(s)?),
-        0x5200 => parse_sync(s).map(|_| Art::Sync)?,
-        _ => return Err(Error::UnsupportedOpCode(op_code)),
-    };
-
-    Ok(message)
+impl<'a> Art<'a> {
+    pub fn op_code(&self) -> u16 {
+        match self {
+            Art::Poll(_) => codes::OP_POLL,
+            Art::Command(_) => codes::OP_COMMAND,
+            Art::Dmx(_) => codes::OP_DMX,
+            Art::Sync => codes::OP_SYNC,
+            Art::PollReply(_) => codes::OP_POLL_REPLY,
+        }
+    }
+    pub fn serialize(&self, buf: &mut BytesMut) {
+        buf.put_slice(ID);
+        buf.put_u16_le(self.op_code());
+        buf.put_u16(PROTOCOL_VERSION);
+        match self {
+            Art::Poll(_) => todo!(),
+            Art::Command(_) => todo!(),
+            Art::Dmx(dmx) => {
+                dmx.serialize(buf);
+            }
+            Art::Sync => buf.put_u16(0),
+            _ => todo!(),
+        }
+    }
 }
 
 /// (ESTAManLo, ESTAManHi)
@@ -88,11 +134,11 @@ pub fn put_esta_manufacturer_code<B: BufMut>(
 /// Bits:
 ///     | 15 | 8-14 | 4-7    | 0-3      |
 ///     | 0  | Net  | SubNet | Universe |
-#[derive(Debug)]
+#[derive(PartialEq, Eq, Debug)]
 pub struct PortAddress {
-    pub net: u8,
-    pub sub_net: u8,
-    pub universe: u8,
+    net: u8,
+    sub_net: u8,
+    universe: u8,
 }
 
 fn parse_port_address<'a>(s: &'a [u8]) -> IResult<&'a [u8], PortAddress> {
@@ -117,9 +163,48 @@ fn parse_port_address<'a>(s: &'a [u8]) -> IResult<&'a [u8], PortAddress> {
 }
 
 impl PortAddress {
-    /// Combines the Net, SubNet and Universe into a single usize index. Note this is not the same as the little endian u16 sent over the wire.
+    pub fn new(net: u8, sub_net: u8, universe: u8) -> Result<Self, Error<'static>> {
+        if net > 127 {
+            return Err(Error::InvalidNet);
+        }
+
+        if sub_net > 15 {
+            return Err(Error::InvalidSubnet);
+        }
+
+        if universe > 15 {
+            return Err(Error::InvalidUniverse);
+        }
+
+        Ok(Self {
+            net,
+            sub_net,
+            universe,
+        })
+    }
+
+    // Combines the Net, SubNet and Universe into a single usize index. Note this is not the same as the little endian u16 sent over the wire.
     pub fn as_index(&self) -> usize {
         (self.net as usize >> 14) + (self.sub_net as usize >> 7) + (self.universe as usize)
+    }
+
+    pub(crate) fn serialize(&self, buf: &mut BytesMut) {
+        buf.put_u8(self.universe + (self.sub_net << 4));
+
+        // we do not need to check this is within range because it can only be parsed correctly
+        buf.put_u8(self.net);
+    }
+
+    pub fn net(&self) -> u8 {
+        self.net
+    }
+
+    pub fn sub_net(&self) -> u8 {
+        self.sub_net
+    }
+
+    pub fn universe(&self) -> u8 {
+        self.universe
     }
 }
 
@@ -186,7 +271,7 @@ fn parse_command<'a>(s: &'a [u8]) -> Result<Command<'a>, Error<'a>> {
     })
 }
 
-#[derive(Debug)]
+#[derive(PartialEq, Eq, Debug)]
 pub struct Dmx<'a> {
     /// The sequence number is used to ensure that
     /// ArtDmx packets are used in the correct order.
@@ -218,6 +303,32 @@ pub struct Dmx<'a> {
     pub data: &'a [u8],
 }
 
+impl<'a> Dmx<'a> {
+    fn serialize(&self, mut buf: &mut BytesMut) {
+        let data_len = self.data.len();
+        buf.put_u8(self.sequence);
+        buf.put_u8(self.physical);
+        self.port_address.serialize(&mut buf);
+        buf.put_u16(data_len as u16);
+        buf.put_slice(self.data);
+    }
+}
+
+impl<'a> core::fmt::Display for Dmx<'a> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_fmt(format_args!(
+            "ArtDMX Universe = {} Seq: {:width$} Data: [{:width$}] [{:width$}] [{:width$}] [{:width$}] [...]",
+            self.port_address.universe(),
+            self.sequence,
+            &self.data[0],
+            &self.data[1],
+            &self.data[2],
+            &self.data[3],
+            width = 3
+        ))
+    }
+}
+
 fn parse_dmx<'a>(s: &'a [u8]) -> Result<Dmx<'a>, Error<'a>> {
     let (s, sequence) = number::u8(s)?;
     let (s, physical) = number::u8(s)?;
@@ -240,4 +351,37 @@ fn parse_sync<'a>(s: &'a [u8]) -> Result<(), Error<'a>> {
     let (_s, _aux2) = number::u8(s)?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn port_addr_roundtrip() {
+        let addr = PortAddress::new(123, 5, 8).unwrap();
+        let mut buf = BytesMut::new();
+        addr.serialize(&mut buf);
+        let (_, output) = parse_port_address(&buf).unwrap();
+
+        assert_eq!(output, addr);
+    }
+
+    #[test]
+    fn dmx_roundtrip() {
+        let data = &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
+
+        let dmx = Dmx {
+            data,
+            sequence: 42,
+            physical: 5,
+            port_address: PortAddress::new(13, 3, 2).unwrap(),
+        };
+
+        let mut buf = BytesMut::new();
+
+        dmx.serialize(&mut buf);
+        let output = parse_dmx(&buf).unwrap();
+        assert_eq!(dmx, output);
+    }
 }
