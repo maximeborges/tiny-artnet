@@ -2,7 +2,21 @@ use bytes::BufMut;
 
 use crate::put_esta_manufacturer_code;
 
-const OP_POLL_REPLY: u16 = 0x2100;
+bitflags::bitflags! {
+    #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
+    pub struct PortTypes: u8 {
+        const DMX512 = 0b00000000;
+        const MIDI = 0b0000001;
+        const AVAB = 0b00000010;
+        const COLORTRAN_CMX= 0b00000011;
+        const ADB62_5 = 0b00000011;
+        const ARTNET = 0b00000101;
+        const DALI =   0b00001100;
+        const INPUT = 0b01000000;
+        const OUTPUT = 0b10000000;
+
+    }
+}
 
 #[derive(Debug)]
 pub struct PollReply<'a> {
@@ -48,7 +62,7 @@ pub struct PollReply<'a> {
     /// Note: The spec specifies ASCII characters only
     pub node_report: &'a str,
     pub num_ports: u16,
-    pub port_types: &'a [u8; 4],
+    pub port_types: [PortTypes; 4],
     pub good_input: &'a [u8; 4],
     pub good_output_a: &'a [u8; 4],
     pub swin: &'a [u8; 4],
@@ -83,7 +97,7 @@ impl<'a> Default for PollReply<'a> {
             long_name: Default::default(),
             node_report: Default::default(),
             num_ports: Default::default(),
-            port_types: crate::DEFAULT_4_BYTES,
+            port_types: Default::default(),
             good_input: crate::DEFAULT_4_BYTES,
             good_output_a: crate::DEFAULT_4_BYTES,
             swin: crate::DEFAULT_4_BYTES,
@@ -111,7 +125,7 @@ impl<'a> PollReply<'a> {
         let initial_buf_len = buf.len();
 
         buf.put_slice(crate::ID);
-        buf.put_u16_le(OP_POLL_REPLY);
+        buf.put_u16_le(super::codes::OP_POLL_REPLY);
         buf.put_slice(self.ip_address);
         buf.put_u16_le(self.port);
         buf.put_u16(self.firmware_version);
@@ -127,7 +141,10 @@ impl<'a> PollReply<'a> {
         crate::put_padded_str::<64, _>(&mut buf, &self.node_report);
 
         buf.put_u16(self.num_ports);
-        buf.put_slice(self.port_types);
+        for port_type in self.port_types.iter().map(|ty| ty.bits()) {
+            buf.put_u8(port_type);
+        }
+
         buf.put_slice(self.good_input);
         buf.put_slice(self.good_output_a);
         buf.put_slice(self.swin);

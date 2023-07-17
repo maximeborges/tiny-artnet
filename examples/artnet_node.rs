@@ -51,7 +51,7 @@ fn main() {
     loop {
         let (len, from_addr) = socket.recv_from(&mut buf).unwrap();
 
-        match tiny_artnet::from_slice(&buf[..len]) {
+        match Art::from_slice(&buf[..len]) {
             Ok(Art::Dmx(dmx)) => {
                 if dmx.port_address.universe() == 6 {
                     let out_dmx = Dmx {
