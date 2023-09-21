@@ -41,6 +41,9 @@ pub enum Error<'a> {
     InvalidUniverse,
     UnsupportedProtocolVersion(u16),
     UnsupportedOpCode(u16),
+    /// The amount of data specified in the packet metadata does not match the actual data
+    /// received.  
+    InvalidDataLength,
     ParserError(nom::Err<nom::error::Error<&'a [u8]>>),
 }
 
@@ -50,6 +53,7 @@ impl core::fmt::Display for Error<'_> {
             Error::InvalidNet => f.write_str("InvalidNet"),
             Error::InvalidSubnet => f.write_str("InvalidSubnet"),
             Error::InvalidUniverse => f.write_str("InvalidUniverse"),
+            Error::InvalidDataLength => f.write_str("InvalidDataLength"),
             Error::UnsupportedProtocolVersion(version) => f
                 .debug_tuple("UnsupportedProtocolVersion")
                 .field(version)
@@ -165,13 +169,13 @@ impl<'a> Art<'a> {
         buf.put_u16_le(self.op_code());
         buf.put_u16(PROTOCOL_VERSION);
         match self {
-            Art::Poll(_) => todo!(),
-            Art::Command(_) => todo!(),
             Art::Dmx(dmx) => {
                 dmx.serialize(buf);
             }
             Art::Sync => buf.put_u16(0),
-            _ => todo!(),
+
+            // TODO: implement remaining packets as well
+            Art::PollReply(_) | Art::Poll(_) | Art::Command(_) => unimplemented!(),
         }
     }
 }
@@ -399,6 +403,10 @@ fn parse_dmx<'a>(s: &'a [u8]) -> Result<Dmx<'a>, Error<'a>> {
     let (s, port_address) = parse_port_address(s)?;
 
     let (s, length): (&'a [u8], u16) = be_u16(s)?;
+
+    if length as usize > s.len() {
+        return Err(Error::InvalidDataLength);
+    }
 
     let data = &s[..length as usize];
 
