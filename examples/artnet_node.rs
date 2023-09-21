@@ -1,6 +1,6 @@
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, UdpSocket};
 
-use tiny_artnet::Art;
+use tiny_artnet::{Art, PortTypes};
 use tiny_artnet::{Dmx, PortAddress};
 use tiny_artnet_bytes_no_atomic::BytesMut;
 
@@ -42,7 +42,7 @@ fn main() {
         // This Node has one port
         num_ports: 1,
         // This node has one output channel
-        port_types: &[0b10000000, 0, 0, 0],
+        port_types: [PortTypes::DMX512; 4],
         // Report that data is being output correctly
         good_output_a: &[0b10000000, 0, 0, 0],
         ..Default::default()
