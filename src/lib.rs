@@ -254,7 +254,7 @@ impl PortAddress {
 
     // Combines the Net, SubNet and Universe into a single usize index. Note this is not the same as the little endian u16 sent over the wire.
     pub fn as_index(&self) -> usize {
-        (self.net as usize >> 14) + (self.sub_net as usize >> 7) + (self.universe as usize)
+        ((self.net as usize) << 8) + ((self.sub_net as usize) << 4) + (self.universe as usize)
     }
 
     pub(crate) fn serialize(&self, offset: &mut usize, buf: &mut [u8]) {
