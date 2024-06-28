@@ -1,4 +1,4 @@
-use bytes::BufMut;
+use byte::BytesExt;
 
 use crate::put_esta_manufacturer_code;
 
@@ -124,46 +124,47 @@ impl<'a> PollReply<'a> {
     pub fn serialize(&self, mut buf: &mut [u8]) -> usize {
         let initial_buf_len = buf.len();
 
-        buf.put_slice(crate::ID);
-        buf.put_u16_le(super::codes::OP_POLL_REPLY);
-        buf.put_slice(self.ip_address);
-        buf.put_u16_le(self.port);
-        buf.put_u16(self.firmware_version);
-        buf.put_u8(self.net_switch);
-        buf.put_u8(self.sub_switch);
-        buf.put_u16(self.oem);
-        buf.put_u8(self.ubea_version);
-        buf.put_u8(self.status1);
+        let offset = &mut 0;
+        buf.write::<&[u8]>(offset, crate::ID);
+        buf.write_with::<u16>(offset, super::codes::OP_POLL_REPLY, byte::LE);
+        buf.write::<&[u8]>(offset, self.ip_address);
+        buf.write_with::<u16>(offset, self.port, byte::LE);
+        buf.write::<u16>(offset, self.firmware_version);
+        buf.write::<u8>(offset, self.net_switch);
+        buf.write::<u8>(offset, self.sub_switch);
+        buf.write::<u16>(offset, self.oem);
+        buf.write::<u8>(offset, self.ubea_version);
+        buf.write::<u8>(offset, self.status1);
         put_esta_manufacturer_code(&mut buf, &self.esta_manufacturer_code);
 
-        crate::put_padded_str::<18, _>(&mut buf, &self.short_name);
-        crate::put_padded_str::<64, _>(&mut buf, &self.long_name);
-        crate::put_padded_str::<64, _>(&mut buf, &self.node_report);
+        crate::put_padded_str::<18>(offset, &mut buf, &self.short_name);
+        crate::put_padded_str::<64>(offset, &mut buf, &self.long_name);
+        crate::put_padded_str::<64>(offset, &mut buf, &self.node_report);
 
-        buf.put_u16(self.num_ports);
+        buf.write::<u16>(offset, self.num_ports);
         for port_type in self.port_types.iter().map(|ty| ty.bits()) {
-            buf.put_u8(port_type);
+            buf.write::<u8>(offset, port_type);
         }
 
-        buf.put_slice(self.good_input);
-        buf.put_slice(self.good_output_a);
-        buf.put_slice(self.swin);
-        buf.put_slice(self.swout);
-        buf.put_u8(self.acn_priority);
-        buf.put_u8(self.sw_macro);
-        buf.put_u8(self.sw_remote);
+        buf.write::<&[u8]>(offset, self.good_input);
+        buf.write::<&[u8]>(offset, self.good_output_a);
+        buf.write::<&[u8]>(offset, self.swin);
+        buf.write::<&[u8]>(offset, self.swout);
+        buf.write::<u8>(offset, self.acn_priority);
+        buf.write::<u8>(offset, self.sw_macro);
+        buf.write::<u8>(offset, self.sw_remote);
         // Spare
-        buf.put_slice(&[0u8; 3]);
-        buf.put_u8(self.style);
-        buf.put_slice(self.mac_address);
-        buf.put_slice(self.bind_ip_address);
-        buf.put_u8(self.bind_index);
-        buf.put_u8(self.status2);
-        buf.put_slice(self.good_output_b);
-        buf.put_u8(self.status3);
-        buf.put_slice(self.default_responder_uid);
+        buf.write::<&[u8]>(offset, &[0u8; 3]);
+        buf.write::<u8>(offset, self.style);
+        buf.write::<&[u8]>(offset, self.mac_address);
+        buf.write::<&[u8]>(offset, self.bind_ip_address);
+        buf.write::<u8>(offset, self.bind_index);
+        buf.write::<u8>(offset, self.status2);
+        buf.write::<&[u8]>(offset, self.good_output_b);
+        buf.write::<u8>(offset, self.status3);
+        buf.write::<&[u8]>(offset, self.default_responder_uid);
         // Filler
-        buf.put_slice(&[0u8; 15]);
+        buf.write::<&[u8]>(offset, &[0u8; 15]);
 
         return initial_buf_len - buf.len();
     }

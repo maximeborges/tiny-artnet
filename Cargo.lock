@@ -21,6 +21,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "630be753d4e58660abd17930c71b647fe46c27ea6b63cc59e1e3851406972e42"
 
 [[package]]
+name = "byte"
+version = "0.2.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "21c7ab3e4ae80853c7f8dcdcd904dfa25c02cc373534b8d165194325a088a7cc"
+
+[[package]]
 name = "byteorder"
 version = "1.4.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -174,17 +180,11 @@ name = "tiny-artnet"
 version = "0.1.3"
 dependencies = [
  "bitflags 2.3.3",
+ "byte",
  "local-ip-address",
  "mac_address",
  "nom",
- "tiny-artnet-bytes-no-atomic",
 ]
-
-[[package]]
-name = "tiny-artnet-bytes-no-atomic"
-version = "1.2.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c26c57f0398a7fd68af1bee8759e7b3b915595cbf30862f5c61524a09ba48af3"
 
 [[package]]
 name = "unicode-ident"

@@ -2,7 +2,6 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr, UdpSocket};
 
 use tiny_artnet::{Art, PortTypes};
 use tiny_artnet::{Dmx, PortAddress};
-use tiny_artnet_bytes_no_atomic::BytesMut;
 
 fn main() {
     // Use the default ArtNet Port
@@ -69,7 +68,7 @@ fn main() {
                     println!("=> {}", &out_dmx);
                     let art = Art::Dmx(out_dmx);
 
-                    let mut out_buf = BytesMut::new();
+                    let mut out_buf = [0; 2048];
                     art.serialize(&mut out_buf);
                     socket.send_to(&out_buf, broadcast_addr).unwrap();
                 } else {

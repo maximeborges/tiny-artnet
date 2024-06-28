@@ -1,14 +1,13 @@
-#![no_std]
-extern crate tiny_artnet_bytes_no_atomic as bytes;
+#![cfg_attr(not(test), no_std)]
 
 pub mod codes;
 
 mod poll_reply;
 pub use poll_reply::*;
 
+use byte::{BytesExt, BE, LE};
 use core::ops::{Deref, RangeInclusive};
 
-pub use bytes::{BufMut as BufMutNoAtomic, BytesMut as BytesMutNoAtomic};
 use nom::{
     bytes::complete::tag,
     number::complete as number,
@@ -164,15 +163,16 @@ impl<'a> Art<'a> {
             Art::PollReply(_) => codes::OP_POLL_REPLY,
         }
     }
-    pub fn serialize(&self, buf: &mut BytesMutNoAtomic) {
-        buf.put_slice(ID);
-        buf.put_u16_le(self.op_code());
-        buf.put_u16(PROTOCOL_VERSION);
+    pub fn serialize(&self, buf: &mut [u8]) {
+        let offset = &mut 0;
+        buf.write::<&[u8]>(offset, ID).unwrap();
+        buf.write_with::<u16>(offset, self.op_code(), LE).unwrap();
+        buf.write::<u16>(offset, PROTOCOL_VERSION).unwrap();
         match self {
             Art::Dmx(dmx) => {
-                dmx.serialize(buf);
+                dmx.serialize(&mut buf[*offset..]);
             }
-            Art::Sync => buf.put_u16(0),
+            Art::Sync => buf.write::<u16>(offset, 0).unwrap(),
 
             // TODO: implement remaining packets as well
             Art::PollReply(_) | Art::Poll(_) | Art::Command(_) => unimplemented!(),
@@ -188,12 +188,13 @@ fn parse_esta_manufacturer_code<'a>(s: &'a [u8]) -> IResult<&'a [u8], ESTAManufa
     Ok((s, (lo as char, hi as char)))
 }
 
-pub fn put_esta_manufacturer_code<B: BufMutNoAtomic>(
-    buf: &mut B,
+pub fn put_esta_manufacturer_code(
+    buf: &mut [u8],
     manufacturer_code: &ESTAManufacturerCode,
 ) {
-    buf.put_u8(manufacturer_code.0 as u8);
-    buf.put_u8(manufacturer_code.1 as u8);
+    let offset = &mut 0;
+    buf.write::<u8>(offset, manufacturer_code.0 as u8).unwrap();
+    buf.write::<u8>(offset, manufacturer_code.1 as u8).unwrap();
 }
 
 /// One of the 32,768 possible addresses to which a DMX frame can be
@@ -256,11 +257,11 @@ impl PortAddress {
         (self.net as usize >> 14) + (self.sub_net as usize >> 7) + (self.universe as usize)
     }
 
-    pub(crate) fn serialize(&self, buf: &mut BytesMutNoAtomic) {
-        buf.put_u8(self.universe + (self.sub_net << 4));
+    pub(crate) fn serialize(&self, offset: &mut usize, buf: &mut [u8]) {
+        buf.write::<u8>(offset, self.universe + (self.sub_net << 4));
 
         // we do not need to check this is within range because it can only be parsed correctly
-        buf.put_u8(self.net);
+        buf.write::<u8>(offset, self.net);
     }
 
     pub fn net(&self) -> u8 {
@@ -277,7 +278,7 @@ impl PortAddress {
 }
 
 // Appends a Nul terminated ASCII string truncated (or padded) to N bytes
-fn put_padded_str<const N: usize, B: BufMutNoAtomic>(mut buf: B, input: &str) {
+fn put_padded_str<const N: usize>(offset: &mut usize, buf: &mut [u8], input: &str) {
     let mut padded_bytes = [0; N];
 
     let bytes = input.as_bytes();
@@ -289,9 +290,9 @@ fn put_padded_str<const N: usize, B: BufMutNoAtomic>(mut buf: B, input: &str) {
     };
 
     // Put the truncated bytes into the padded buffer - this guarentees that the length is always N
-    (&mut padded_bytes[..]).put_slice(truncated_bytes);
+    (&mut padded_bytes[..]).write::<&[u8]>(offset, truncated_bytes);
 
-    buf.put_slice(&padded_bytes);
+    buf.write::<&[u8]>(offset, &padded_bytes);
 }
 
 #[derive(Debug)]
@@ -372,13 +373,14 @@ pub struct Dmx<'a> {
 }
 
 impl<'a> Dmx<'a> {
-    fn serialize(&self, buf: &mut BytesMutNoAtomic) {
+    fn serialize(&self, buf: &mut [u8]) {
+        let offset = &mut 0;
         let data_len = self.data.len();
-        buf.put_u8(self.sequence.map(|seq| seq.into()).unwrap_or_default());
-        buf.put_u8(self.physical);
-        self.port_address.serialize(buf);
-        buf.put_u16(data_len as u16);
-        buf.put_slice(self.data);
+        buf.write::<u8>(offset, self.sequence.map(|seq| seq.into()).unwrap_or_default());
+        buf.write::<u8>(offset, self.physical);
+        self.port_address.serialize(offset, buf);
+        buf.write_with::<u16>(offset, data_len as u16, BE);
+        buf.write::<&[u8]>(offset, self.data);
     }
 }
 
@@ -432,8 +434,8 @@ mod test {
     #[test]
     fn port_addr_roundtrip() {
         let addr = PortAddress::new(123, 5, 8).unwrap();
-        let mut buf = BytesMutNoAtomic::new();
-        addr.serialize(&mut buf);
+        let mut buf = [0; 1024];
+        addr.serialize(&mut 0, &mut buf);
         let (_, output) = parse_port_address(&buf).unwrap();
 
         assert_eq!(output, addr);
@@ -450,7 +452,7 @@ mod test {
             port_address: PortAddress::new(13, 3, 2).unwrap(),
         };
 
-        let mut buf = BytesMutNoAtomic::new();
+        let mut buf = [0; 1024];
 
         dmx.serialize(&mut buf);
         let output = parse_dmx(&buf).unwrap();
